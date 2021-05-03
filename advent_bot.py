@@ -2,6 +2,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 from io import BytesIO
 
 import adventure
@@ -12,7 +13,9 @@ from adventure.game import Game
 logging.getLogger().setLevel(logging.INFO)
 
 DATABASE_NAME = "advent.sqlite"
-TWITTER_MAX_RESULTS = 10
+TWITTER_MAX_RESULTS = 20
+
+# TODO: move all game stuff to it's own Game class (that encapsulates an adventure.game.Game object)
 
 
 class AdventureBot:
@@ -30,7 +33,6 @@ class AdventureBot:
         self._api = tweepy.API(auth, wait_on_rate_limit=True)
 
         self.database_name = DATABASE_NAME
-        self.state = {"mention_id": 1389032149605486594}
 
         self.max_results = TWITTER_MAX_RESULTS
 
@@ -41,10 +43,17 @@ class AdventureBot:
             raise ValueError("Error during twitter authentication")
 
         self.open_database()
+        self.state = self.load_state()
+        logging.info(f"self.state after loading {self.state}")
+        self.state = self.state or {
+            "last_seen_mention_id": 1389208292186988545,
+            "date": time.time(),
+        }
 
     def get_mentions(self):
         logging.info(f"Retrieving mentions")
-        since_id = self.state["mention_id"]
+        since_id = self.state["last_seen_mention_id"]
+        logging.info(f"since_id: {since_id}")
         for tweet in tweepy.Cursor(
             self._api.search,
             q=f"@{self._api.me().screen_name} -filter:retweets",
@@ -52,31 +61,65 @@ class AdventureBot:
             since_id=since_id,
             count=self.max_results,
         ).items():
+            logging.info(f"tweet.id={tweet.id}, {since_id > tweet.id} {since_id - tweet.id}")
             since_id = max(tweet.id, since_id)
+            self.state["last_seen_mention_id"] = since_id
+            logging.info(f"since_id: {since_id}")
+
+            if self.have_replied(tweet.id):
+                logging.info(f"Have already replied to tweet {tweet.id}")
+                continue
+
             if tweet.display_text_range:
                 start, stop = tweet.display_text_range
                 text = tweet.full_text[start:stop]
             else:
                 text = tweet.full_text
 
+            game = None
             if tweet.in_reply_to_status_id is not None:
                 logging.info(
                     f"in_reply_to_status_id: {tweet.in_reply_to_status_id}, id: {tweet.id}, user: {tweet.user.screen_name}"
                 )
                 logging.info(f"full_text: {tweet.full_text}, {text}")
+                game = self.load_game(tweet.in_reply_to_status_id)
+
+            if game:
+                logging.info(f"Loaded game from database, playing move")
+                self.play_move(tweet, text, game)
             else:
-                # not a reply
+                # not a reply or didn't find game
                 logging.info(f"New game with {tweet.user.screen_name}")
                 self.new_game(tweet.id, screen_name=tweet.user.screen_name)
 
-        self.state["mention_id"] = since_id
         logging.info(f"since_id: {since_id}")
+        self.save_state()
         return since_id
 
     def open_database(self):
         logging.info(f"Opening database {self.database_name}")
         self.db = sqlite3.connect(self.database_name)
         self._create_tables()
+
+    def play_move(self, tweet, text, game):
+        result = self.do_command(text, game)
+        logging.info(f"play_move result = '{result}'")
+        reply_tweet = self._api.update_status(
+            status=result,
+            in_reply_to_status_id=tweet.id,
+            auto_populate_reply_metadata=True,
+        )
+        self.save_game(
+            game, reply_tweet.id, tweet.id, result, screen_name=tweet.user.screen_name
+        )
+
+    def do_command(self, text, game):
+        command = text.lower().strip()
+        commands = command.split()
+        result = game.do_command(commands)
+        result = result.strip()
+        logging.info(f"result of do_command = {result}")
+        return result
 
     def new_game(self, id_=None, screen_name=None):
         game = Game()
@@ -103,10 +146,9 @@ class AdventureBot:
             except tweepy.error.TweepError as e:
                 logging.info(f"tweepy error: {e}")
         if tweet:
-            self.save_game(game, tweet.id, result, screen_name=screen_name)
-            # self.save_game(game, id_, result)
+            self.save_game(game, tweet.id, id_ or 0, result, screen_name=screen_name)
 
-    def save_game(self, game, id_, text, screen_name=None):
+    def save_game(self, game, tweet_id, reply_id, text, screen_name=None):
         c = self.db.cursor()
         save_data = BytesIO()
         result = game.do_command(["save", save_data])
@@ -115,30 +157,103 @@ class AdventureBot:
 
         screen_name = screen_name or ""
         c.execute(
-            "INSERT INTO games(tweet_id, screen_name, text, game_data) values (?, ?, ?, ?);",
-            (str(id_), screen_name, text, save_data.getbuffer()),
+            "INSERT OR REPLACE INTO games(tweet_id, in_reply_to_id, screen_name, text, game_data) values (?, ?, ?, ?, ?);",
+            (str(tweet_id), str(reply_id), screen_name, text, save_data.getbuffer()),
         )
         self.db.commit()
-        logging.info(f"Saved game: {id_}, {text}")
+        logging.info(f"Saved game: {tweet_id}, {text}")
+
+    def load_game(self, tweet_id):
+        c = self.db.cursor()
+        c.execute("SELECT game_data FROM games WHERE tweet_id = ?", (tweet_id,))
+        results = c.fetchone()
+
+        if not results:
+            return None
+
+        save_data = BytesIO(results[0])
+        game = Game.resume(save_data)
+        logging.info(game)
+        return game
+
+    def have_replied(self, tweet_id):
+        if not self.db:
+            raise ValueError("database doesn't appear to be open")
+
+        c = self.db.cursor()
+        c.execute("SELECT * FROM games WHERE in_reply_to_id = ?", (str(tweet_id),))
+        result = c.fetchone()
+        return bool(result)
+
+    def load_state(self):
+        if not self.db:
+            raise ValueError("database doesn't appear to be open")
+
+        logging.info(f"Loading state")
+        c = self.db.cursor()
+        c.execute("SELECT * from state ORDER BY rowid DESC LIMIT 1;")
+        result = c.fetchone()
+        if not result:
+            return None
+
+        colnames = c.description
+        state = {k[0]: v for k, v in zip(colnames, result)}
+        state["last_seen_mention_id"] = int(state["last_seen_mention_id"])
+        logging.info(f"Loaded state {state}")
+        return state
+
+    def save_state(self):
+        if not self.db:
+            raise ValueError("database doesn't appear to be open")
+
+        logging.info(f"Saving state: {self.state}")
+        c = self.db.cursor()
+        c.execute(
+            "INSERT INTO state(last_seen_mention_id, date) values (?, ?);",
+            (str(self.state["last_seen_mention_id"]), time.time()),
+        )
+        self.db.commit()
 
     def _create_tables(self):
         if not self.db:
             raise ValueError("database doesn't appear to be open")
 
         logging.info("Creating tables")
-        self.db.execute(
+        sql_commands = [
             """
             CREATE TABLE IF NOT EXISTS games (
                 id INTEGER PRIMARY KEY,
                 tweet_id TEXT NOT NULL,
+                in_reply_to_id TEXT,
                 screen_name TEXT,
                 text TEXT NOT NULL,
                 game_data BLOB NOT NULL
-            );"""
-        )
+            );""",
+            """
+            CREATE TABLE IF NOT EXISTS state (
+                id INTEGER PRIMARY KEY,
+                last_seen_mention_id TEXT NOT NULL,
+                date REAL NOT NULL
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS 
+                idx_tweet_id on games (tweet_id); 
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS 
+                idx_reply_id on games (in_reply_to_id); 
+            """,
+        ]
+
+        c = self.db.cursor()
+        for command in sql_commands:
+            c.execute(command)
+        self.db.commit()
 
     def __del__(self):
         if self.db:
+            self.save_state()
             logging.info(f"Closing database {self.db}")
             self.db.close()
 
