@@ -14,12 +14,18 @@ from adventure.game import Game
 
 logging.getLogger().setLevel(logging.INFO)
 
+# where to store the bot data (sqlite database)
 DATABASE_NAME = "advent.sqlite"
+
+# how many results to fetch at once
 TWITTER_MAX_RESULTS = 20
+
+# ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
+START_TWEET_ID = 1389574430746025993
 
 
 class AdventureDB:
-    """ Store game data """
+    """ Store game data in sqlite database """
 
     def __init__(self, dbname):
         self.database_name = dbname
@@ -43,15 +49,35 @@ class AdventureDB:
 
         screen_name = screen_name or ""
         c.execute(
-            "INSERT OR REPLACE INTO games(tweet_id, in_reply_to_id, screen_name, text, game_data) values (?, ?, ?, ?, ?);",
-            (str(tweet_id), str(reply_id), screen_name, text, save_data.getbuffer()),
+            """
+            INSERT OR REPLACE INTO game_data(save_data) 
+            values (?);
+            """,
+            (save_data.getbuffer(),),
+        )
+        game_id = c.lastrowid
+        c.execute(
+            """
+            INSERT OR REPLACE INTO games(tweet_id, in_reply_to_id, screen_name, text, game_id)
+            values (?, ?, ?, ?, ?);
+            """,
+            (tweet_id, reply_id, screen_name, text, game_id),
         )
         self.db.commit()
         logging.info(f"Saved game: {tweet_id}, {text}")
 
     def load_game(self, tweet_id):
         c = self.db.cursor()
-        c.execute("SELECT game_data FROM games WHERE tweet_id = ?", (tweet_id,))
+        c.execute(
+            """
+            SELECT game_data.save_data 
+            FROM game_data 
+            JOIN games ON games.game_id = game_data.id
+            WHERE games.tweet_id = ?
+            """,
+            (tweet_id,),
+        )
+
         results = c.fetchone()
 
         if not results:
@@ -67,7 +93,7 @@ class AdventureDB:
             raise ValueError("database doesn't appear to be open")
 
         c = self.db.cursor()
-        c.execute("SELECT * FROM games WHERE in_reply_to_id = ?", (str(tweet_id),))
+        c.execute("SELECT * FROM games WHERE in_reply_to_id = ?", (tweet_id,))
         result = c.fetchone()
         return bool(result)
 
@@ -84,7 +110,7 @@ class AdventureDB:
 
         colnames = c.description
         state = {k[0]: v for k, v in zip(colnames, result)}
-        state["last_seen_mention_id"] = int(state["last_seen_mention_id"])
+        # state["last_seen_mention_id"] = int(state["last_seen_mention_id"])
         logging.info(f"Loaded state {state}")
         return state
 
@@ -96,7 +122,7 @@ class AdventureDB:
         c = self.db.cursor()
         c.execute(
             "INSERT INTO state(last_seen_mention_id, date) values (?, ?);",
-            (str(state["last_seen_mention_id"]), time.time()),
+            (state["last_seen_mention_id"], time.time()),
         )
         self.db.commit()
 
@@ -109,16 +135,21 @@ class AdventureDB:
             """
             CREATE TABLE IF NOT EXISTS games (
                 id INTEGER PRIMARY KEY,
-                tweet_id TEXT NOT NULL,
-                in_reply_to_id TEXT,
+                tweet_id INTEGER NOT NULL,
+                in_reply_to_id INTEGER,
                 screen_name TEXT,
                 text TEXT NOT NULL,
-                game_data BLOB NOT NULL
+                game_id INTEGER NOT NULL
+            );""",
+            """
+            CREATE TABLE IF NOT EXISTS game_data (
+                id INTEGER PRIMARY KEY,
+                save_data BLOB NOT NULL
             );""",
             """
             CREATE TABLE IF NOT EXISTS state (
                 id INTEGER PRIMARY KEY,
-                last_seen_mention_id TEXT NOT NULL,
+                last_seen_mention_id INTEGER NOT NULL,
                 date REAL NOT NULL
             );
             """,
@@ -165,9 +196,11 @@ class AdventureGame:
         return self.result
 
     def do_command_str(self, command_str: str) -> str:
+        # TODO: strip out hash tags
         command = command_str.lower().strip()
         commands = command.split()
         return self.do_command(commands)
+
 
 class AdventureBot:
     def __init__(self):
@@ -195,7 +228,7 @@ class AdventureBot:
         self.state = self.db.load_state()
         logging.info(f"self.state after loading {self.state}")
         self.state = self.state or {
-            "last_seen_mention_id": 1389208292186988545,
+            "last_seen_mention_id": START_TWEET_ID,
             "date": time.time(),
         }
 
@@ -257,7 +290,6 @@ class AdventureBot:
         self.db.save_game(
             game, reply_tweet.id, tweet.id, result, screen_name=tweet.user.screen_name
         )
-
 
     def new_game(self, id_=None, screen_name=None):
         game = AdventureGame()
