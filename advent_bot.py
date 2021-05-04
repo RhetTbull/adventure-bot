@@ -23,7 +23,18 @@ TWITTER_MAX_RESULTS = 20
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
 START_TWEET_ID = 1389577040324530180
 
-# TODO: Add custom exceptions
+
+class AdventureSaveError(Exception):
+    pass
+
+
+class AdventureDatabaseNotOpen(Exception):
+    pass
+
+
+class TwitterAuthenticationError(Exception):
+    pass
+
 
 class AdventureGame:
     """ Play Adventure, encapsulates the adventure.game.Game object """
@@ -57,7 +68,7 @@ class AdventureGame:
         save_data = BytesIO()
         result = self.game.do_command(["save", save_data])
         if not result.startswith("GAME SAVED"):
-            raise ValueError(f"Error saving game")
+            raise AdventureSaveError(f"Error saving game")
         return save_data.getbuffer()
 
 
@@ -122,7 +133,7 @@ class AdventureDB:
 
     def have_replied(self, tweet_id):
         if not self.db:
-            raise ValueError("database doesn't appear to be open")
+            raise AdventureDatabaseNotOpen("database doesn't appear to be open")
 
         c = self.db.cursor()
         c.execute("SELECT * FROM games WHERE in_reply_to_id = ?", (tweet_id,))
@@ -131,7 +142,7 @@ class AdventureDB:
 
     def load_state(self):
         if not self.db:
-            raise ValueError("database doesn't appear to be open")
+            raise AdventureDatabaseNotOpen("database doesn't appear to be open")
 
         logging.info(f"Loading state")
         c = self.db.cursor()
@@ -148,7 +159,7 @@ class AdventureDB:
 
     def save_state(self, state):
         if not self.db:
-            raise ValueError("database doesn't appear to be open")
+            raise AdventureDatabaseNotOpen("database doesn't appear to be open")
 
         logging.info(f"Saving state: {state}")
         c = self.db.cursor()
@@ -160,7 +171,7 @@ class AdventureDB:
 
     def _create_tables(self):
         if not self.db:
-            raise ValueError("database doesn't appear to be open")
+            raise AdventureDatabaseNotOpen("database doesn't appear to be open")
 
         logging.info("Creating tables")
         sql_commands = [
@@ -225,7 +236,7 @@ class AdventureBot:
             self._api.verify_credentials()
             logging.info("Twitter authentication OK")
         except:
-            raise ValueError("Error during twitter authentication")
+            raise TwitterAuthenticationError("Error during twitter authentication")
 
         self.db = AdventureDB(DATABASE_NAME)
         self.state = self.db.load_state()
