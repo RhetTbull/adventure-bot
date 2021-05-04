@@ -6,10 +6,10 @@ import sqlite3
 import sys
 import time
 from io import BytesIO
+from typing import List
 
 import adventure
 import tweepy
-from adventure import load_advent_dat
 from adventure.game import Game
 
 logging.getLogger().setLevel(logging.INFO)
@@ -59,7 +59,7 @@ class AdventureDB:
             return None
 
         save_data = BytesIO(results[0])
-        game = Game.resume(save_data)
+        game = AdventureGame(save_data)
         logging.info(game)
         return game
 
@@ -143,6 +143,29 @@ class AdventureDB:
             self.db.close()
 
 
+class AdventureGame:
+    """ Play Adventure """
+
+    def __init__(self, save_data=None):
+        self.result = ""
+        self.load_game(save_data) if save_data else self.new_game()
+
+    def new_game(self):
+        self.game = Game()
+        adventure.load_advent_dat(self.game)
+        self.game.start()
+        self.do_command(["no"])
+        return self.game
+
+    def load_game(self, save_data):
+        self.game = Game.resume(save_data)
+        self.result = ""
+
+    def do_command(self, words: List[str]) -> str:
+        self.result = self.game.do_command(words).strip()
+        return self.result
+
+
 class AdventureBot:
     def __init__(self):
         logging.info(f"AdventureBot init")
@@ -191,7 +214,7 @@ class AdventureBot:
             self.state["last_seen_mention_id"] = since_id
             logging.info(f"since_id: {since_id}")
 
-            if self.have_replied(tweet.id):
+            if self.db.have_replied(tweet.id):
                 logging.info(f"Have already replied to tweet {tweet.id}")
                 continue
 
@@ -208,7 +231,6 @@ class AdventureBot:
                 )
                 logging.info(f"full_text: {tweet.full_text}, {text}")
                 game = self.db.load_game(tweet.in_reply_to_status_id)
-
             if game:
                 logging.info(f"Loaded game from database, playing move")
                 self.play_move(tweet, text, game)
@@ -237,17 +259,12 @@ class AdventureBot:
         command = text.lower().strip()
         commands = command.split()
         result = game.do_command(commands)
-        result = result.strip()
         logging.info(f"result of do_command = {result}")
         return result
 
     def new_game(self, id_=None, screen_name=None):
-        game = Game()
-        load_advent_dat(game)
-        game.start()
-        # no instructions
-        result = game.do_command(["no"])
-        result = result.strip()
+        game = AdventureGame()
+        result = game.result
         logging.info(f"result='{result}'")
         tweet = None
         if id_:
