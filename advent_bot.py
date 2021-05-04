@@ -21,7 +21,44 @@ DATABASE_NAME = "advent.sqlite"
 TWITTER_MAX_RESULTS = 20
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389574430746025993
+START_TWEET_ID = 1389577040324530180
+
+# TODO: Add custom exceptions
+
+class AdventureGame:
+    """ Play Adventure, encapsulates the adventure.game.Game object """
+
+    def __init__(self, save_data=None):
+        self.result = ""
+        self.load_game(save_data) if save_data else self.new_game()
+
+    def new_game(self):
+        self.game = Game()
+        adventure.load_advent_dat(self.game)
+        self.game.start()
+        self.do_command(["no"])
+        return self.game
+
+    def load_game(self, save_data):
+        self.game = Game.resume(save_data)
+        self.result = ""
+
+    def do_command(self, words: List[str]) -> str:
+        self.result = self.game.do_command(words).strip()
+        return self.result
+
+    def do_command_str(self, command_str: str) -> str:
+        # TODO: strip out hash tags
+        command = command_str.lower().strip()
+        commands = command.split()
+        return self.do_command(commands)
+
+    def save_game(self) -> memoryview:
+        save_data = BytesIO()
+        result = self.game.do_command(["save", save_data])
+        if not result.startswith("GAME SAVED"):
+            raise ValueError(f"Error saving game")
+        return save_data.getbuffer()
 
 
 class AdventureDB:
@@ -41,19 +78,14 @@ class AdventureDB:
 
     def save_game(self, game, tweet_id, reply_id, text, screen_name=None):
         c = self.db.cursor()
-        # todo: move this to AdventureGame()
-        save_data = BytesIO()
-        result = game.do_command(["save", save_data])
-        if not result.startswith("GAME SAVED"):
-            raise ValueError(f"Error saving game")
-
+        save_data = game.save_game()
         screen_name = screen_name or ""
         c.execute(
             """
             INSERT OR REPLACE INTO game_data(save_data) 
             values (?);
             """,
-            (save_data.getbuffer(),),
+            (save_data,),
         )
         game_id = c.lastrowid
         c.execute(
@@ -171,35 +203,6 @@ class AdventureDB:
     def __del__(self):
         if self.db:
             self.db.close()
-
-
-class AdventureGame:
-    """ Play Adventure """
-
-    def __init__(self, save_data=None):
-        self.result = ""
-        self.load_game(save_data) if save_data else self.new_game()
-
-    def new_game(self):
-        self.game = Game()
-        adventure.load_advent_dat(self.game)
-        self.game.start()
-        self.do_command(["no"])
-        return self.game
-
-    def load_game(self, save_data):
-        self.game = Game.resume(save_data)
-        self.result = ""
-
-    def do_command(self, words: List[str]) -> str:
-        self.result = self.game.do_command(words).strip()
-        return self.result
-
-    def do_command_str(self, command_str: str) -> str:
-        # TODO: strip out hash tags
-        command = command_str.lower().strip()
-        commands = command.split()
-        return self.do_command(commands)
 
 
 class AdventureBot:
