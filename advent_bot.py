@@ -17,8 +17,6 @@ logging.getLogger().setLevel(logging.INFO)
 DATABASE_NAME = "advent.sqlite"
 TWITTER_MAX_RESULTS = 20
 
-# TODO: move all game stuff to it's own Game class (that encapsulates an adventure.game.Game object)
-
 
 class AdventureDB:
     """ Store game data """
@@ -37,6 +35,7 @@ class AdventureDB:
 
     def save_game(self, game, tweet_id, reply_id, text, screen_name=None):
         c = self.db.cursor()
+        # todo: move this to AdventureGame()
         save_data = BytesIO()
         result = game.do_command(["save", save_data])
         if not result.startswith("GAME SAVED"):
@@ -165,6 +164,10 @@ class AdventureGame:
         self.result = self.game.do_command(words).strip()
         return self.result
 
+    def do_command_str(self, command_str: str) -> str:
+        command = command_str.lower().strip()
+        commands = command.split()
+        return self.do_command(commands)
 
 class AdventureBot:
     def __init__(self):
@@ -244,7 +247,7 @@ class AdventureBot:
         return since_id
 
     def play_move(self, tweet, text, game):
-        result = self.do_command(text, game)
+        result = game.do_command_str(text)
         logging.info(f"play_move result = '{result}'")
         reply_tweet = self._api.update_status(
             status=result,
@@ -255,12 +258,6 @@ class AdventureBot:
             game, reply_tweet.id, tweet.id, result, screen_name=tweet.user.screen_name
         )
 
-    def do_command(self, text, game):
-        command = text.lower().strip()
-        commands = command.split()
-        result = game.do_command(commands)
-        logging.info(f"result of do_command = {result}")
-        return result
 
     def new_game(self, id_=None, screen_name=None):
         game = AdventureGame()
