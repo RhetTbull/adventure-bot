@@ -23,6 +23,9 @@ TWITTER_MAX_RESULTS = 20
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
 START_TWEET_ID = 1389577040324530180
 
+# How long (in seconds) to sleep between handling mentions, don't exceed 900 / 15 calls per minute to stay within twitter API rate limits
+TIME_TO_SLEEP = 5
+
 
 class AdventureSaveError(Exception):
     pass
@@ -246,7 +249,7 @@ class AdventureBot:
             "date": time.time(),
         }
 
-    def get_mentions(self):
+    def handle_mentions(self):
         logging.info(f"Retrieving mentions")
         since_id = self.state["last_seen_mention_id"]
         logging.info(f"since_id: {since_id}")
@@ -328,6 +331,11 @@ class AdventureBot:
         if tweet:
             self.db.save_game(game, tweet.id, id_ or 0, result, screen_name=screen_name)
 
+    def run(self):
+        while True:
+            self.handle_mentions()
+            time.sleep(TIME_TO_SLEEP)
+
     def __del__(self):
         if self.db:
             self.db.save_state(self.state)
@@ -337,4 +345,4 @@ class AdventureBot:
 
 if __name__ == "__main__":
     bot = AdventureBot()
-    bot.get_mentions()
+    bot.run()
