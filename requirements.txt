@@ -1,0 +1,2 @@
+adventure==1.6
+tweepy==3.10.0
