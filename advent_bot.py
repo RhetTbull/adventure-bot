@@ -24,10 +24,11 @@ TWITTER_MAX_RESULTS = 20
 TWITTER_MAX_TWEET_LEN = 280
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389744120311160838
+START_TWEET_ID = 1389748450737082372
 
 # How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute to stay within twitter API application rate limits
 TIME_TO_SLEEP = 10
+
 
 def split_tweet(text: str, max_length=None, auto_number=False) -> List[str]:
     """ split long tweet into series of shorter tweets; will raise ValueError if 
@@ -129,7 +130,7 @@ class AdventureDB:
     def close(self):
         self.db.close()
 
-    def save_game(self, game, tweet_ids, reply_id, text, screen_name=None):
+    def save_game(self, game, tweet_ids, reply_id, command, response, screen_name=None):
         c = self.db.cursor()
         save_data = game.save_game()
         screen_name = screen_name or ""
@@ -143,18 +144,20 @@ class AdventureDB:
 
         # can have more than one tweet per game as long tweets are split
         records = [
-            (tweet_id, reply_id, screen_name, text, game_id) for tweet_id in tweet_ids
+            (tweet_id, reply_id, screen_name, command, response, game_id)
+            for tweet_id in tweet_ids
         ]
         for record in records:
             c.execute(
                 """
-                INSERT INTO games(tweet_id, in_reply_to_id, screen_name, text, game_id) VALUES(?, ?, ?, ?, ?);
+                INSERT INTO games(tweet_id, in_reply_to_id, screen_name, command, response, game_id) 
+                VALUES(?, ?, ?, ?, ?, ?);
                 """,
                 record,
             )
         self.db.commit()
 
-        logging.info(f"Saved game: {tweet_ids}, {text}")
+        logging.info(f"Saved game: {tweet_ids}, {response}")
 
     def load_game(self, tweet_id):
         c = self.db.cursor()
@@ -227,7 +230,8 @@ class AdventureDB:
                 tweet_id INTEGER NOT NULL,
                 in_reply_to_id INTEGER,
                 screen_name TEXT,
-                text TEXT NOT NULL,
+                command TEXT,
+                response TEXT,
                 game_id INTEGER NOT NULL
             );""",
             """
@@ -333,7 +337,7 @@ class AdventureBot:
             else:
                 # not a reply or didn't find game
                 logging.info(f"New game with {tweet.user.screen_name}")
-                self.new_game(tweet.id, screen_name=tweet.user.screen_name)
+                self.new_game(tweet.id, text, screen_name=tweet.user.screen_name)
 
         logging.info(f"since_id: {since_id}")
         self.db.save_state(self.state)
@@ -352,10 +356,15 @@ class AdventureBot:
             )
             status_ids.append(reply_tweet.id)
         self.db.save_game(
-            game, status_ids, tweet.id, result, screen_name=tweet.user.screen_name
+            game,
+            status_ids,
+            tweet.id,
+            command,
+            result,
+            screen_name=tweet.user.screen_name,
         )
 
-    def new_game(self, reply_id=None, screen_name=None):
+    def new_game(self, command=None, reply_id=None, screen_name=None):
         game = AdventureGame()
         result = game.result
         logging.info(f"result='{result}'")
@@ -376,8 +385,14 @@ class AdventureBot:
             except tweepy.error.TweepError as e:
                 logging.info(f"tweepy error: {e}")
         if tweet:
+            command = command or ""
             self.db.save_game(
-                game, [tweet.id], reply_id or 0, result, screen_name=screen_name
+                game,
+                [tweet.id],
+                reply_id or 0,
+                command,
+                result,
+                screen_name=screen_name,
             )
 
     def run(self):
