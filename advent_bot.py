@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -20,11 +21,49 @@ DATABASE_NAME = "advent.sqlite"
 # how many results to fetch at once
 TWITTER_MAX_RESULTS = 20
 
-# ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389577040324530180
+TWITTER_MAX_TWEET_LEN = 280
 
-# How long (in seconds) to sleep between handling mentions, don't exceed 900 / 15 calls per minute to stay within twitter API rate limits
-TIME_TO_SLEEP = 5
+# ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
+START_TWEET_ID = 1389744120311160838
+
+# How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute to stay within twitter API application rate limits
+TIME_TO_SLEEP = 10
+
+def split_tweet(text: str, max_length=None, auto_number=False) -> List[str]:
+    """ split long tweet into series of shorter tweets; will raise ValueError if 
+        any word in tweet is longer than max_length """
+
+    if not max_length:
+        max_length = TWITTER_MAX_TWEET_LEN
+
+    if len(text) <= max_length:
+        return [text]
+
+    if auto_number:
+        # adjust for ' xx/yy' numbering
+        max_length = max_length - 6
+
+    words = re.findall(r"(\w+\W?[^\w]*)", text)
+    if any(len(w) > max_length for w in words):
+        raise ValueError(f"tweet contains a word that exceeds max length")
+
+    tweets = []
+    tweet = ""
+    for word in words:
+        if len(tweet + word) < max_length:
+            tweet += word
+        else:
+            tweets.append(tweet)
+            tweet = word
+    if tweet:
+        tweets.append(tweet)
+
+    if auto_number:
+        num_tweets = len(tweets)
+        for x in range(num_tweets):
+            tweets[x] = f"{x+1}/{num_tweets} {tweets[x]}"
+
+    return tweets
 
 
 class AdventureSaveError(Exception):
@@ -90,27 +129,32 @@ class AdventureDB:
     def close(self):
         self.db.close()
 
-    def save_game(self, game, tweet_id, reply_id, text, screen_name=None):
+    def save_game(self, game, tweet_ids, reply_id, text, screen_name=None):
         c = self.db.cursor()
         save_data = game.save_game()
         screen_name = screen_name or ""
         c.execute(
             """
-            INSERT OR REPLACE INTO game_data(save_data) 
-            values (?);
+            INSERT INTO game_data(save_data) VALUES (?);
             """,
             (save_data,),
         )
         game_id = c.lastrowid
-        c.execute(
-            """
-            INSERT OR REPLACE INTO games(tweet_id, in_reply_to_id, screen_name, text, game_id)
-            values (?, ?, ?, ?, ?);
-            """,
-            (tweet_id, reply_id, screen_name, text, game_id),
-        )
+
+        # can have more than one tweet per game as long tweets are split
+        records = [
+            (tweet_id, reply_id, screen_name, text, game_id) for tweet_id in tweet_ids
+        ]
+        for record in records:
+            c.execute(
+                """
+                INSERT INTO games(tweet_id, in_reply_to_id, screen_name, text, game_id) VALUES(?, ?, ?, ?, ?);
+                """,
+                record,
+            )
         self.db.commit()
-        logging.info(f"Saved game: {tweet_id}, {text}")
+
+        logging.info(f"Saved game: {tweet_ids}, {text}")
 
     def load_game(self, tweet_id):
         c = self.db.cursor()
@@ -167,7 +211,7 @@ class AdventureDB:
         logging.info(f"Saving state: {state}")
         c = self.db.cursor()
         c.execute(
-            "INSERT INTO state(last_seen_mention_id, date) values (?, ?);",
+            "INSERT INTO state(last_seen_mention_id, date) VALUES(?, ?);",
             (state["last_seen_mention_id"], time.time()),
         )
         self.db.commit()
@@ -180,7 +224,6 @@ class AdventureDB:
         sql_commands = [
             """
             CREATE TABLE IF NOT EXISTS games (
-                id INTEGER PRIMARY KEY,
                 tweet_id INTEGER NOT NULL,
                 in_reply_to_id INTEGER,
                 screen_name TEXT,
@@ -194,17 +237,16 @@ class AdventureDB:
             );""",
             """
             CREATE TABLE IF NOT EXISTS state (
-                id INTEGER PRIMARY KEY,
                 last_seen_mention_id INTEGER NOT NULL,
                 date REAL NOT NULL
             );
             """,
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS 
+            CREATE INDEX IF NOT EXISTS 
                 idx_tweet_id on games (tweet_id); 
             """,
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS 
+            CREATE INDEX IF NOT EXISTS 
                 idx_reply_id on games (in_reply_to_id); 
             """,
         ]
@@ -274,6 +316,7 @@ class AdventureBot:
             if tweet.display_text_range:
                 start, stop = tweet.display_text_range
                 text = tweet.full_text[start:stop]
+                logging.info(f"start = {start}")
             else:
                 text = tweet.full_text
 
@@ -296,29 +339,33 @@ class AdventureBot:
         self.db.save_state(self.state)
         return since_id
 
-    def play_move(self, tweet, text, game):
-        result = game.do_command_str(text)
+    def play_move(self, tweet, command, game):
+        result = game.do_command_str(command)
         logging.info(f"play_move result = '{result}'")
-        reply_tweet = self._api.update_status(
-            status=result,
-            in_reply_to_status_id=tweet.id,
-            auto_populate_reply_metadata=True,
-        )
+        tweets_to_send = split_tweet(result, auto_number=True)
+        status_ids = []
+        for status in tweets_to_send:
+            reply_tweet = self._api.update_status(
+                status=status,
+                in_reply_to_status_id=tweet.id,
+                auto_populate_reply_metadata=True,
+            )
+            status_ids.append(reply_tweet.id)
         self.db.save_game(
-            game, reply_tweet.id, tweet.id, result, screen_name=tweet.user.screen_name
+            game, status_ids, tweet.id, result, screen_name=tweet.user.screen_name
         )
 
-    def new_game(self, id_=None, screen_name=None):
+    def new_game(self, reply_id=None, screen_name=None):
         game = AdventureGame()
         result = game.result
         logging.info(f"result='{result}'")
         tweet = None
-        if id_:
-            logging.info(f"Responding to id {id_}")
+        if reply_id:
+            logging.info(f"Responding to id {reply_id}")
             try:
                 tweet = self._api.update_status(
                     status=result,
-                    in_reply_to_status_id=id_,
+                    in_reply_to_status_id=reply_id,
                     auto_populate_reply_metadata=True,
                 )
             except tweepy.error.TweepError as e:
@@ -329,11 +376,16 @@ class AdventureBot:
             except tweepy.error.TweepError as e:
                 logging.info(f"tweepy error: {e}")
         if tweet:
-            self.db.save_game(game, tweet.id, id_ or 0, result, screen_name=screen_name)
+            self.db.save_game(
+                game, [tweet.id], reply_id or 0, result, screen_name=screen_name
+            )
 
     def run(self):
         while True:
             self.handle_mentions()
+            limits = self._api.rate_limit_status()
+            logging.info(limits["resources"]["application"])
+            logging.info(f"Sleeping for {TIME_TO_SLEEP} seconds")
             time.sleep(TIME_TO_SLEEP)
 
     def __del__(self):
