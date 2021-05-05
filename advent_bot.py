@@ -24,7 +24,7 @@ TWITTER_MAX_RESULTS = 20
 TWITTER_MAX_TWEET_LEN = 280
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389795257408122880
+START_TWEET_ID = 1389806783858806790
 
 # How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute to stay within twitter API application rate limits
 TIME_TO_SLEEP = 10
@@ -178,7 +178,6 @@ class AdventureDB:
 
         save_data = BytesIO(results[0])
         game = AdventureGame(save_data)
-        logging.info(game)
         return game
 
     def have_replied(self, tweet_id):
@@ -194,7 +193,6 @@ class AdventureDB:
         if not self.db:
             raise AdventureDatabaseNotOpen("database doesn't appear to be open")
 
-        logging.info(f"Loading state")
         c = self.db.cursor()
         c.execute("SELECT * from state ORDER BY rowid DESC LIMIT 1;")
         result = c.fetchone()
@@ -202,10 +200,7 @@ class AdventureDB:
             return None
 
         colnames = c.description
-        state = {k[0]: v for k, v in zip(colnames, result)}
-        # state["last_seen_mention_id"] = int(state["last_seen_mention_id"])
-        logging.info(f"Loaded state {state}")
-        return state
+        return {k[0]: v for k, v in zip(colnames, result)}
 
     def save_state(self, state):
         if not self.db:
@@ -289,7 +284,6 @@ class AdventureBot:
 
         self.db = AdventureDB(DATABASE_NAME)
         self.state = self.db.load_state()
-        logging.info(f"self.state after loading {self.state}")
         self.state = self.state or {
             "last_seen_mention_id": START_TWEET_ID,
             "date": time.time(),
@@ -298,7 +292,6 @@ class AdventureBot:
     def handle_mentions(self):
         logging.info(f"Retrieving mentions")
         since_id = self.state["last_seen_mention_id"]
-        logging.info(f"since_id: {since_id}")
         for tweet in tweepy.Cursor(
             self._api.search,
             q=f"@{self._api.me().screen_name} -filter:retweets",
@@ -306,9 +299,6 @@ class AdventureBot:
             since_id=since_id,
             count=self.max_results,
         ).items():
-            logging.info(
-                f"tweet.id={tweet.id}, {since_id > tweet.id} {since_id - tweet.id}"
-            )
             since_id = max(tweet.id, since_id)
             self.state["last_seen_mention_id"] = since_id
             logging.info(f"since_id: {since_id}")
@@ -320,7 +310,6 @@ class AdventureBot:
             if tweet.display_text_range:
                 start, stop = tweet.display_text_range
                 text = tweet.full_text[start:stop]
-                logging.info(f"start = {start}")
             else:
                 text = tweet.full_text
 
@@ -339,7 +328,6 @@ class AdventureBot:
                 logging.info(f"New game with {tweet.user.screen_name}")
                 self.new_game(tweet)
 
-        logging.info(f"since_id: {since_id}")
         self.db.save_state(self.state)
         return since_id
 
@@ -367,7 +355,6 @@ class AdventureBot:
     def new_game(self, tweet=None):
         game = AdventureGame()
         result = game.result
-        logging.info(f"result='{result}'")
         reply_tweet = None
         reply_id = 0
         screen_name = ""
