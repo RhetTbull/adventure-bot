@@ -24,7 +24,7 @@ TWITTER_MAX_RESULTS = 20
 TWITTER_MAX_TWEET_LEN = 280
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389748450737082372
+START_TWEET_ID = 1389795257408122880
 
 # How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute to stay within twitter API application rate limits
 TIME_TO_SLEEP = 10
@@ -337,7 +337,7 @@ class AdventureBot:
             else:
                 # not a reply or didn't find game
                 logging.info(f"New game with {tweet.user.screen_name}")
-                self.new_game(tweet.id, text, screen_name=tweet.user.screen_name)
+                self.new_game(tweet)
 
         logging.info(f"since_id: {since_id}")
         self.db.save_state(self.state)
@@ -364,31 +364,38 @@ class AdventureBot:
             screen_name=tweet.user.screen_name,
         )
 
-    def new_game(self, command=None, reply_id=None, screen_name=None):
+    def new_game(self, tweet=None):
         game = AdventureGame()
         result = game.result
         logging.info(f"result='{result}'")
-        tweet = None
-        if reply_id:
+        reply_tweet = None
+        reply_id = 0
+        screen_name = ""
+        command = ""
+        if tweet:
+            reply_id = tweet.id
+            screen_name = tweet.user.screen_name
             logging.info(f"Responding to id {reply_id}")
             try:
-                tweet = self._api.update_status(
+                result = f"HELLO @{screen_name}.\n{result}"
+                reply_tweet = self._api.update_status(
                     status=result,
-                    in_reply_to_status_id=reply_id,
+                    in_reply_to_status_id=tweet.id,
                     auto_populate_reply_metadata=True,
                 )
             except tweepy.error.TweepError as e:
                 logging.info(f"tweepy error: {e}")
         else:
             try:
-                tweet = self._api.update_status(status=result)
+                reply_tweet = self._api.update_status(status=result)
             except tweepy.error.TweepError as e:
                 logging.info(f"tweepy error: {e}")
-        if tweet:
+
+        if reply_tweet:
             command = command or ""
             self.db.save_game(
                 game,
-                [tweet.id],
+                [reply_tweet.id],
                 reply_id or 0,
                 command,
                 result,
