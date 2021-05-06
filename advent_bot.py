@@ -17,7 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 logging.getLogger().setLevel(logging.INFO)
 
 # where to store the bot data (sqlite database)
-DATABASE_NAME = "advent.sqlite"
+DATABASE_NAME = os.environ["COLOSSAL_CAVE_DATABASE"]
 
 # how many results to fetch at once
 TWITTER_MAX_RESULTS = 20
