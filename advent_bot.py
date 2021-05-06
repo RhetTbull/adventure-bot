@@ -12,6 +12,7 @@ from typing import List
 import adventure
 import tweepy
 from adventure.game import Game
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logging.getLogger().setLevel(logging.INFO)
 
@@ -24,10 +25,10 @@ TWITTER_MAX_RESULTS = 20
 TWITTER_MAX_TWEET_LEN = 280
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389806783858806790
+START_TWEET_ID = 1389828016067407878
 
-# How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute to stay within twitter API application rate limits
-TIME_TO_SLEEP = 10
+# How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute (> 5 seconds) to stay within twitter API application rate limits
+TIME_TO_SLEEP = 7
 
 
 def split_tweet(text: str, max_length=None, auto_number=False) -> List[str]:
@@ -177,8 +178,7 @@ class AdventureDB:
             return None
 
         save_data = BytesIO(results[0])
-        game = AdventureGame(save_data)
-        return game
+        return AdventureGame(save_data)
 
     def have_replied(self, tweet_id):
         if not self.db:
@@ -389,11 +389,24 @@ class AdventureBot:
                 screen_name=screen_name,
             )
 
+    def check_rate_limits(self):
+        limits = self._api.rate_limit_status()
+        for resource_type in limits["resources"]:
+            for resource in limits["resources"][resource_type]:
+                limit = limits["resources"][resource_type][resource]["limit"]
+                remaining = limits["resources"][resource_type][resource]["remaining"]
+                if remaining < limit:
+                    logging.info(
+                        f"resource {resource_type} {resource}: limit={limit}, remaining={remaining}"
+                    )
+
+    @retry(
+        wait=wait_exponential(multiplier=1, min=1, max=10), stop=stop_after_attempt(10)
+    )
     def run(self):
         while True:
             self.handle_mentions()
-            limits = self._api.rate_limit_status()
-            logging.info(limits["resources"]["application"])
+            self.check_rate_limits()
             logging.info(f"Sleeping for {TIME_TO_SLEEP} seconds")
             time.sleep(TIME_TO_SLEEP)
 
