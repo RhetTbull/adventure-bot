@@ -18,6 +18,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 # where to store the bot data (sqlite database)
 DATABASE_NAME = os.environ["COLOSSAL_CAVE_DATABASE"]
+logging.info(f"DATABASE_NAME: '{DATABASE_NAME}'")
 
 # how many results to fetch at once
 TWITTER_MAX_RESULTS = 20

@@ -3,14 +3,12 @@
 FROM python:3.8-slim-buster
 
 # create a new user to run the bot
-RUN useradd --create-home botuser 
+RUN groupadd -r botuser \
+    && useradd --no-log-init -r --create-home -g botuser botuser 
 
 # Update linux packages
 RUN apt-get update && \
     apt-get upgrade -y 
-
-# below for typ-ast error on alpine, see: https://github.com/PyCQA/pylint/issues/2291
-#RUN apk add --no-cache --update python3-dev  gcc build-base
 
 WORKDIR /home/botuser
 
@@ -18,7 +16,12 @@ WORKDIR /home/botuser
 COPY advent_bot.py /home/botuser
 COPY requirements.txt /tmp
 
+# install requirements
 RUN pip3 install -r /tmp/requirements.txt
+
+# create volume for persistent storage
+# RUN mkdir -p -m 777 /shared \
+#     && chown botuser:botuser /shared
 
 # run as botuser instead of root
 USER botuser
