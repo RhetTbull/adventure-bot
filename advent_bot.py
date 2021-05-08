@@ -26,7 +26,7 @@ TWITTER_MAX_RESULTS = 20
 TWITTER_MAX_TWEET_LEN = 280
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1389828016067407878
+START_TWEET_ID = 1390775241249497088
 
 # How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute (> 5 seconds) to stay within twitter API application rate limits
 TIME_TO_SLEEP = 7
