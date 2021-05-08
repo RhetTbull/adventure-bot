@@ -26,7 +26,7 @@ TWITTER_MAX_RESULTS = 20
 TWITTER_MAX_TWEET_LEN = 280
 
 # ID of the last tweet seen -- only used for testing, once operational, this is stored in the database
-START_TWEET_ID = 1390775241249497088
+START_TWEET_ID = 1391027365879238656
 
 # How long (in seconds) to sleep between handling mentions, don't exceed 180 / 15 calls per minute (> 5 seconds) to stay within twitter API application rate limits
 TIME_TO_SLEEP = 7
@@ -122,6 +122,8 @@ class AdventureDB:
 
     def __init__(self, dbname):
         self.database_name = dbname
+        # types for saving state, kludgy but it works
+        self.key_value_store = {"last_seen_mention_id": int, "date": float}
         self.open_database()
 
     def open_database(self):
@@ -195,13 +197,18 @@ class AdventureDB:
             raise AdventureDatabaseNotOpen("database doesn't appear to be open")
 
         c = self.db.cursor()
-        c.execute("SELECT * from state ORDER BY rowid DESC LIMIT 1;")
-        result = c.fetchone()
+        c.execute("SELECT * from key_value_store;")
+        result = c.fetchall()
         if not result:
-            return None
+            return {}
 
-        colnames = c.description
-        return {k[0]: v for k, v in zip(colnames, result)}
+        state = {}
+        for row in result:
+            k = row[1]
+            # cast value to correct type
+            v = self.key_value_store[k](row[2]) if k in self.key_value_store else row[2]
+            state[k] = v
+        return state
 
     def save_state(self, state):
         if not self.db:
@@ -209,10 +216,11 @@ class AdventureDB:
 
         logging.info(f"Saving state: {state}")
         c = self.db.cursor()
-        c.execute(
-            "INSERT INTO state(last_seen_mention_id, date) VALUES(?, ?);",
-            (state["last_seen_mention_id"], time.time()),
-        )
+        for k, v in state.items():
+            c.execute(
+                "INSERT OR REPLACE INTO key_value_store(field, value, date) VALUES(?, ?, ?);",
+                (str(k), str(v), time.time()),
+            )
         self.db.commit()
 
     def _create_tables(self):
@@ -236,18 +244,23 @@ class AdventureDB:
                 save_data BLOB NOT NULL
             );""",
             """
-            CREATE TABLE IF NOT EXISTS state (
-                last_seen_mention_id INTEGER NOT NULL,
-                date REAL NOT NULL
+            CREATE TABLE IF NOT EXISTS key_value_store (
+                id INTEGER PRIMARY KEY,
+                field TEXT NOT NULL,
+                value TEXT,
+                date REAL
             );
             """,
             """
             CREATE INDEX IF NOT EXISTS 
-                idx_tweet_id on games (tweet_id); 
+                idx_tweet_id ON games (tweet_id); 
             """,
             """
             CREATE INDEX IF NOT EXISTS 
-                idx_reply_id on games (in_reply_to_id); 
+                idx_reply_id ON games (in_reply_to_id); 
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS
+                idx_state_field ON key_value_store(field);
             """,
         ]
 
@@ -289,6 +302,7 @@ class AdventureBot:
             "last_seen_mention_id": START_TWEET_ID,
             "date": time.time(),
         }
+        logging.info(f"state = {self.state}")
 
     def handle_mentions(self):
         logging.info(f"Retrieving mentions")
