@@ -17,7 +17,7 @@ This was inspired by listening to an interview with [Brandon Rhodes](https://twi
 
 Alternatively, you can use Docker.  See `Dockerfile`, `docker_build.sh`, and `docker_run.sh` in this repo.
 
-To get this running on Oracle Cloud, I did the following:
+To get this running on [Oracle Cloud](https://www.oracle.com/cloud/sign-in.html?redirect_uri=https%3A%2F%2Fcloud.oracle.com%2F), I did the following:
 
 - Follow instructions [here](https://oracle-base.com/articles/linux/docker-install-docker-on-oracle-linux-ol8) to install Docker
 - Follow instructions [here](https://oracle-base.com/articles/linux/docker-host-file-system-permissions-for-container-persistent-host-volumes) to set permissions correctly for persistent storage
