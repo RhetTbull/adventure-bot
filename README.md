@@ -1,6 +1,6 @@
 # Adventure Bot
 
-Twitter bot that plays Colossal Cave Adventure.  @ mention the bot and it will start a new game of Adventure with you that's playable through tweets.
+Twitter bot that plays Colossal Cave Adventure.  @ mention [the bot](https://twitter.com/Colossal_Cave) and it will start a new game of Adventure with you that's playable through tweets.
 
 ## Background
 
