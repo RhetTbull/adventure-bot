@@ -22,6 +22,9 @@ To get this running on [Oracle Cloud](https://www.oracle.com/cloud/sign-in.html?
 - Follow instructions [here](https://oracle-base.com/articles/linux/docker-install-docker-on-oracle-linux-ol8) to install Docker
 - Follow instructions [here](https://oracle-base.com/articles/linux/docker-host-file-system-permissions-for-container-persistent-host-volumes) to set permissions correctly for persistent storage
 
+## Implementation
+
+This bot uses [tweepy](https://github.com/tweepy/tweepy) to interface with the Twitter API.  It periodically checks Twitter mentions and when it receives one, the code checks a database of saved games (implemented in sqlite) to see if it has a saved game associted with the "in reply to" tweet ID.  If so, it loads that game and plays the move from the tweet body.  If it doesn't find a matching tweet ID, it creates a new game and saves it to the database associated with the tweet ID.  Effectively, this means every tweet is it's own branch in the game.  If you fall into a pit or get killed by a dwarf, you can go back to a previous tweet and reply to "fork" the game.  It also means other users can fork your game which opens the possibility for shared play.  The code uses the save/resume feature built into `python-adventure` to save the game to a `ByteIO` object which is stored in the database.  `python-adventure` implements save/resume using zlib-compressed pickle and every saved game is ~35KB in size.  This isn't super efficient but given I expect no more than one or two people using the bot at any time and storage is cheap, it's "good enough".
 
 ## Warnings
 
