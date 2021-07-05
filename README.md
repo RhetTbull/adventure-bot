@@ -21,6 +21,7 @@ To get this running on [Oracle Cloud](https://www.oracle.com/cloud/sign-in.html?
 
 - Follow instructions [here](https://oracle-base.com/articles/linux/docker-install-docker-on-oracle-linux-ol8) to install Docker
 - Follow instructions [here](https://oracle-base.com/articles/linux/docker-host-file-system-permissions-for-container-persistent-host-volumes) to set permissions correctly for persistent storage
+- Be very sure to copy your SSH key for the Oracle compute instance to a secure location.  If you fail to follow this advice (like I did) and lose the ssh key, [this](https://blogs.oracle.com/cloud-infrastructure/post/recovering-opc-user-ssh-key-on-oracle-cloud-infrastructure) article may be helpful to recover the key.
 
 ## Implementation
 
