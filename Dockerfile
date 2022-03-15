@@ -1,6 +1,6 @@
 # Made updates based on recommendations from: https://pythonspeed.com/articles/root-capabilities-docker-security/
 
-FROM python:3.8-slim-buster
+FROM python:3.10-slim-buster
 
 # create a new user to run the bot
 RUN groupadd -r botuser \
