@@ -1,3 +1,4 @@
 adventure==1.6
 tweepy==3.10.0
 tenacity==7.0.0
+urllib3>=2.5.0 # not directly required, pinned by Snyk to avoid a vulnerability
